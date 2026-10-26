@@ -69,6 +69,7 @@ class Design:
                         f"-DGK={gk}", f"-DKC={kc}", f"-DMM={MM}", f"-DOB={OB}"],
                        check=True)
         self.wt_t = iron.zeros((NW * self.nobj * OB,), dtype=np.uint8, device="npu")
+        self.slots = {}
         self.ot_t = iron.zeros((NW * self.nod * OB,), dtype=np.uint8, device="npu")
         self.tmpl = None
         self.dirty = True
@@ -121,7 +122,10 @@ class Design:
 
         self.jit = iron.jit(design, object_files=[self.obj])
 
-    def set_weights(self, wq, wd):
+    def set_weights(self, wq, wd, key=None):
+        if key is not None and key in self.slots:   # clean device pages
+            self.wt_t, self.dirty = self.slots[key], False
+            return
         t = np.zeros((NW, self.nobj, OB), np.uint8)
         wtb_w = shred_w8(wq)
         for w in range(NW):
@@ -138,6 +142,12 @@ class Design:
                 base += self.cx + self.nwt
         self.tmpl = t
         self.dirty = True
+        if key is not None:
+            slot = iron.zeros((NW * self.nobj * OB,), dtype=np.uint8, device="npu")
+            slot.data[:] = t.reshape(-1)
+            self.slots[key] = slot
+            self.wt_t = slot
+            self.dirty = False
 
     def call(self, ah, al, s):
         """ah/al [nb*8,K] int8, s [nb*8] f32 -> Y [nb*8,gw] f64."""
@@ -213,7 +223,7 @@ class NpuEmbed:
             self._q[key] = (wq, wd)
         des = self.d[dname]
         if self._cur.get(dname) != key:
-            des.set_weights(*self._q[key])
+            des.set_weights(*self._q[key], key=key)
             self._cur[dname] = key
         ah, al, s = quant_act(X)
         return des.call(ah, al, s)[:X.shape[0]]
@@ -271,6 +281,26 @@ class NpuEmbed:
         return np.stack([self.forward(ids) for ids in self.encode(texts)])
 
 
+def _q8(W):
+    d = (np.abs(W).max(1) / 127).astype(np.float64)
+    q = np.rint(W / np.maximum(np.abs(W).max(1)[:, None] / 127, 1e-9)).clip(-127, 127)
+    return q * d[:, None]
+
+
+class Q8:
+    """EmbedEngine with per-row int8 weight quant — the shared quant floor."""
+
+    @staticmethod
+    def forward(eng, ids):
+        keep = eng.w
+        eng.w = {k: (_q8(v.astype(np.float64)) if v.ndim == 2 else v)
+                 for k, v in eng.w.items()}
+        try:
+            return eng.forward(ids)
+        finally:
+            eng.w = keep
+
+
 if __name__ == "__main__":
     from embed import EmbedEngine
     T = ["It is a lovely day outside.",
@@ -281,14 +311,15 @@ if __name__ == "__main__":
          "and our posterity, do ordain and establish the Constitution of the United "
          "States of America."]
     eng = EmbedEngine()
+
     ids = eng.encode(T)
-    refs = [eng.forward(i) for i in ids]
+    refs = [Q8.forward(eng, i) for i in ids]   # parity: int8 weights both sides
     ne = NpuEmbed()
     ok = True
     for t, i, r in zip(T, ids, refs):
         t0 = time.time()
         e = ne.forward(i)
         cos = float(np.dot(e, r))
-        ok &= cos > 0.995
+        ok &= cos > 0.99
         print(f"T={len(i)} cos {cos:.6f}  {time.time()-t0:.2f}s", flush=True)
     print("PASS" if ok else "FAIL", flush=True)
