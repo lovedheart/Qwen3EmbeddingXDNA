@@ -94,12 +94,17 @@ class GgufEmbed:
         e = x[-1]
         return e / np.linalg.norm(e)
 
-    def encode(self, texts, eos=False):
-        # matches vLLM raw-string handling (no EOS append) by default
-        return [self.tok.encode(t).ids + ([int(self.g.meta["tokenizer.ggml.eos_token_id"])] if eos else [])
-                for t in texts]
+    def encode(self, texts, eos=None):
+        # HF Qwen3-Embedding reference appends EOS before last-token pooling;
+        # vLLM serves jina-v5 raw strings without EOS. Detect by model name;
+        # skip if the tokenizer post-processor already emitted it.
+        if eos is None:
+            eos = "Qwen3" in str(self.g.meta.get("general.name", ""))
+        eid = int(self.g.meta.get("tokenizer.ggml.eos_token_id", 151645))
+        return [(i + [eid] if eos and i[-1:] != [eid] else i)
+                for t in texts for i in [self.tok.encode(t).ids]]
 
-    def embed(self, texts, eos=False):
+    def embed(self, texts, eos=None):
         return np.stack([self.forward(i) for i in self.encode(texts, eos)])
 
     def reload_weights(self):

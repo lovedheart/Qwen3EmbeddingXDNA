@@ -81,7 +81,7 @@ Launch the embedding server — pick a backend via `EMBED_BACKEND`
 |---|---|---|
 | `npu` | Qwen3-Embedding-0.6B, **full forward on the NPU** (`p4_npu_engine.NpuEmbed`) | `EMBED_BACKEND=npu bash scripts/run.sh embed_server.py --port 8996` |
 | `jina` | jina-v5-text-small Q8_0 GGUF, host f64 forward (`jina_q80_eval.Jina`) | `EMBED_BACKEND=jina bash scripts/run.sh embed_server.py --port 8995` |
-| `gguf` | any Qwen3-architecture Q8_0 GGUF — **both** Qwen3-Embedding-0.6B and jina-v5 (host f64, `gguf_embed.GgufEmbed`; pass `--tokenizer` when the GGUF ships its own `tokenizer.json`, jina's must differ) | `EMBED_BACKEND=gguf bash scripts/run.sh embed_server.py --port 8994 --gguf <path.gguf> [--tokenizer <tokenizer.json>]` |
+| `gguf` | any Qwen3-architecture Q8_0 GGUF — **both** Qwen3-Embedding-0.6B and jina-v5 (host f64, `gguf_embed.GgufEmbed`; pass `--tokenizer` when the GGUF ships its own `tokenizer.json`, jina's must differ). EOS handling follows the reference served for each model: Qwen3-Embedding appends EOS (151645) before last-token pooling, jina-v5 raw strings do not | `EMBED_BACKEND=gguf bash scripts/run.sh embed_server.py --port 8994 --gguf <path.gguf> [--tokenizer <tokenizer.json>]` |
 | `host` | Qwen3-Embedding-0.6B, host float64 reference (`embed.EmbedEngine`) | `EMBED_BACKEND=host bash scripts/run.sh embed_server.py --port 8990` |
 
 `npu` jits 5 designs on first launch (~8 s), then serves. Default port is
